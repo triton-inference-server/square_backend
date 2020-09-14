@@ -30,8 +30,13 @@
 
 # Triton Inference Server Square Backend
 
-An simple Triton backend used for testing.  Use cmake to build and
-install in a local directory.
+An simple Triton backend used for testing. You can learn more about
+backends in the [backend
+repo](https://github.com/triton-inference-server/backend). Ask
+questions or report problems in the main Triton [issues
+page](https://github.com/triton-inference-server/server/issues).
+
+Use cmake to build and install in a local directory.
 
 ```
 $ mkdir build
