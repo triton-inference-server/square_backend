@@ -128,8 +128,8 @@ install(
     triton-square-backend
   EXPORT
     triton-square-backend-targets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/square
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/square
 )
 
 install(
