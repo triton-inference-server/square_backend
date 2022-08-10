@@ -380,6 +380,18 @@ ModelInstanceState::RequestThread(
       TRITONBACKEND_ResponseFactory, backend::ResponseFactoryDeleter>
       factory(factory_ptr);
 
+  if (element_count == 0) {
+    // All responses have been sent so we must signal that we are done sending
+    // responses for the request. When zero elements are requested, we will be
+    // sending an empty response with flags only. Otherwise, the last response
+    // will use the TRITONSERVER_RESPONSE_COMPLETE_FINAL to indicate that
+    // sending the responses have been completed.
+    LOG_IF_ERROR(
+        TRITONBACKEND_ResponseFactorySendFlags(
+            factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
+        "failed sending final response");
+  }
+
   // Copy IN->OUT, and send a response.
   const std::vector<int64_t> output_shape(dims_count, 1);
   for (size_t e = 0; e < element_count; ++e) {
@@ -388,6 +400,14 @@ ModelInstanceState::RequestThread(
     RESPOND_FACTORY_AND_RETURN_IF_ERROR(
         factory.get(),
         TRITONBACKEND_ResponseNewFromFactory(&response, factory.get()));
+
+    uint64_t response_start;
+    SET_TIMESTAMP(response_start);
+
+    // In this specific example, there is not computation so the infer time is
+    // small.
+    uint64_t compute_output_start;
+    SET_TIMESTAMP(compute_output_start);
 
     TRITONBACKEND_Output* output;
     RESPOND_FACTORY_AND_RETURN_IF_ERROR(
@@ -415,10 +435,22 @@ ModelInstanceState::RequestThread(
     // Copy IN -> OUT
     *(reinterpret_cast<int32_t*>(output_buffer)) = element_count;
 
+    uint32_t flags = 0;
+    if (e == element_count - 1) {
+      flags = TRITONSERVER_RESPONSE_COMPLETE_FINAL;
+    }
+    uint64_t response_end;
+    SET_TIMESTAMP(response_end);
+
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceReportResponseStatistics(
+            TritonModelInstance(), response, true /* success */, response_start,
+            compute_output_start, response_end, flags));
+
     // Send the response.
     LOG_IF_ERROR(
-        TRITONBACKEND_ResponseSend(
-            response, 0 /* flags */, nullptr /* success */),
+        TRITONBACKEND_ResponseSend(response, flags, nullptr /* success */),
         "failed sending response");
 
     LOG_MESSAGE(
@@ -433,17 +465,6 @@ ModelInstanceState::RequestThread(
   if (element_count == 0) {
     LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
   }
-
-  // All responses have been sent so we must signal that we are done
-  // sending responses for the request. We could have been smarter
-  // above and included the FINAL flag on the ResponseSend in the last
-  // iteration of the loop... but instead we demonstrate how to use
-  // the factory to send just response flags without a corresponding
-  // response.
-  LOG_IF_ERROR(
-      TRITONBACKEND_ResponseFactorySendFlags(
-          factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
-      "failed sending final response");
 
   inflight_thread_count_--;
 }
