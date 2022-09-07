@@ -1,4 +1,4 @@
-// Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+// Copyright 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -380,18 +380,6 @@ ModelInstanceState::RequestThread(
       TRITONBACKEND_ResponseFactory, backend::ResponseFactoryDeleter>
       factory(factory_ptr);
 
-  if (element_count == 0) {
-    // All responses have been sent so we must signal that we are done sending
-    // responses for the request. When zero elements are requested, we will be
-    // sending an empty response with flags only. Otherwise, the last response
-    // will use the TRITONSERVER_RESPONSE_COMPLETE_FINAL to indicate that
-    // sending the responses have been completed.
-    LOG_IF_ERROR(
-        TRITONBACKEND_ResponseFactorySendFlags(
-            factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
-        "failed sending final response");
-  }
-
   // Copy IN->OUT, and send a response.
   const std::vector<int64_t> output_shape(dims_count, 1);
   for (size_t e = 0; e < element_count; ++e) {
@@ -404,7 +392,7 @@ ModelInstanceState::RequestThread(
     uint64_t response_start;
     SET_TIMESTAMP(response_start);
 
-    // In this specific example, there is not computation so the infer time is
+    // In this specific example, there is no computation so the infer time is
     // small.
     uint64_t compute_output_start;
     SET_TIMESTAMP(compute_output_start);
@@ -465,6 +453,17 @@ ModelInstanceState::RequestThread(
   if (element_count == 0) {
     LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
   }
+
+  // All responses have been sent so we must signal that we are done
+  // sending responses for the request. We could have been smarter
+  // above and included the FINAL flag on the ResponseSend in the last
+  // iteration of the loop... but instead we demonstrate how to use
+  // the factory to send just response flags without a corresponding
+  // response.
+  LOG_IF_ERROR(
+      TRITONBACKEND_ResponseFactorySendFlags(
+          factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
+      "failed sending final response");
 
   inflight_thread_count_--;
 }
