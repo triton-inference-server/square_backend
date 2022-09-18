@@ -542,10 +542,13 @@ ModelInstanceState::RequestThread(
             .c_str());
   }
 
-  // Add some logging for the case where IN was size 0 and so no
-  // responses were sent.
+  // Report statistics when no response is sent
   if (element_count == 0) {
     LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceReportNoResponseStatistics(
+            TritonModelInstance()));
   }
 
   // All responses have been sent so we must signal that we are done
