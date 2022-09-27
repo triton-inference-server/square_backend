@@ -24,8 +24,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -97,79 +97,90 @@ namespace triton { namespace backend { namespace square {
 // is malformed/invalid, it will be skipped.
 //
 struct ModelParameters {
-
   size_t custom_infer_delay_ns_;
   size_t custom_output_delay_ns_;
   size_t custom_fail_count_;
 
   enum DelayType { Infer, Output };
 
-  ModelParameters() : custom_infer_delay_ns_(0), custom_output_delay_ns_(0), custom_fail_count_(0) {}
+  ModelParameters()
+      : custom_infer_delay_ns_(0), custom_output_delay_ns_(0),
+        custom_fail_count_(0)
+  {
+  }
   ModelParameters(common::TritonJson::Value& model_config_) : ModelParameters()
   {
     // Read parameters from model config
     common::TritonJson::Value parameters_json;
     if (model_config_.Find("parameters", &parameters_json)) {
       // Read custom_infer_delay_ns_
-      ReadParameter(parameters_json, "CUSTOM_INFER_DELAY_NS", custom_infer_delay_ns_);
+      ReadParameter(
+          parameters_json, "CUSTOM_INFER_DELAY_NS", custom_infer_delay_ns_);
       // Read custom_output_delay_ns_
-      ReadParameter(parameters_json, "CUSTOM_OUTPUT_DELAY_NS", custom_output_delay_ns_);
+      ReadParameter(
+          parameters_json, "CUSTOM_OUTPUT_DELAY_NS", custom_output_delay_ns_);
       // Read custom_fail_count_
       ReadParameter(parameters_json, "CUSTOM_FAIL_COUNT", custom_fail_count_);
     }
   }
 
-  void
-  ReadParameter(common::TritonJson::Value& parameters_json, const std::string& key, size_t& value)
+  void ReadParameter(
+      common::TritonJson::Value& parameters_json, const std::string& key,
+      size_t& value)
   {
     common::TritonJson::Value value_json;
     if (parameters_json.Find(key.c_str(), &value_json)) {
       std::string value_str;
       if (value_json.MemberAsString("string_value", &value_str) != nullptr) {
-        LOG_MESSAGE(TRITONSERVER_LOG_INFO, (std::string("string_value cannot be parsed from ") + key + " parameter").c_str());
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_INFO,
+            (std::string("string_value cannot be parsed from ") + key +
+             " parameter")
+                .c_str());
         return;
       }
       if (!IsNumber(value_str)) {
-        LOG_MESSAGE(TRITONSERVER_LOG_INFO, (value_str + " string_value from " + key + " parameter is not a number").c_str());
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_INFO, (value_str + " string_value from " + key +
+                                    " parameter is not a number")
+                                       .c_str());
         return;
       }
       value = std::stoi(value_str);
     }
   }
 
-  void
-  Sleep(DelayType delay_type) const
+  void Sleep(DelayType delay_type) const
   {
     if (delay_type == DelayType::Infer) {
       Sleep(custom_infer_delay_ns_);
-    }
-    else if (delay_type == DelayType::Output) {
+    } else if (delay_type == DelayType::Output) {
       Sleep(custom_output_delay_ns_);
     }
   }
 
-  bool
-  InferSuccess(size_t current_index, size_t element_count) const
+  bool InferSuccess(size_t current_index, size_t element_count) const
   {
     // Fail the last custom_fail_count_ infer
     return current_index + custom_fail_count_ < element_count;
   }
 
-  static void
-  Sleep(size_t delay_ns)
+  static void Sleep(size_t delay_ns)
   {
     if (delay_ns > 0) {
-      LOG_MESSAGE(TRITONSERVER_LOG_INFO, (std::string("add delay ") + std::to_string(delay_ns) + " ns").c_str());
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO,
+          (std::string("add delay ") + std::to_string(delay_ns) + " ns")
+              .c_str());
       std::this_thread::sleep_for(std::chrono::nanoseconds(delay_ns));
     }
   }
 
-  static bool
-  IsNumber(const std::string& str)
+  static bool IsNumber(const std::string& str)
   {
     return std::find_if(str.begin(), str.end(), [](unsigned char c) {
-            return !std::isdigit(c);
-          }) == str.end();
+             return !std::isdigit(c);
+           }) == str.end();
   }
 };
 
@@ -234,7 +245,8 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 
 ModelState::ModelState(
     TRITONBACKEND_Model* triton_model, common::TritonJson::Value&& model_config)
-    : triton_model_(triton_model), model_config_(std::move(model_config)), model_parameters_(model_config_)
+    : triton_model_(triton_model), model_config_(std::move(model_config)),
+      model_parameters_(model_config_)
 {
 }
 
@@ -481,7 +493,8 @@ ModelInstanceState::RequestThread(
     SET_TIMESTAMP(response_start);
 
     // Simulate compute delay if provided
-    model_state_->get_model_parameters().Sleep(ModelParameters::DelayType::Infer);
+    model_state_->get_model_parameters().Sleep(
+        ModelParameters::DelayType::Infer);
 
     uint64_t compute_output_start;
     SET_TIMESTAMP(compute_output_start);
@@ -518,22 +531,26 @@ ModelInstanceState::RequestThread(
     }
 
     // Simulate output delay if provided
-    model_state_->get_model_parameters().Sleep(ModelParameters::DelayType::Output);
+    model_state_->get_model_parameters().Sleep(
+        ModelParameters::DelayType::Output);
 
     uint64_t response_end;
     SET_TIMESTAMP(response_end);
 
     // Report to fail statistics if provided
-    bool infer_success = model_state_->get_model_parameters().InferSuccess(e, element_count);
+    bool infer_success =
+        model_state_->get_model_parameters().InferSuccess(e, element_count);
 
     RESPOND_FACTORY_AND_RETURN_IF_ERROR(
         factory.get(),
         TRITONBACKEND_ModelInstanceReportResponseStatistics(
-            TritonModelInstance(), response, infer_success /* success */, response_start, compute_output_start, response_end, flags));
+            TritonModelInstance(), response, infer_success /* success */,
+            response_start, compute_output_start, response_end, flags));
 
     // Send the response.
     LOG_IF_ERROR(
-        TRITONBACKEND_ResponseSend(response, flags, nullptr /* success */), "failed sending response");
+        TRITONBACKEND_ResponseSend(response, flags, nullptr /* success */),
+        "failed sending response");
 
     LOG_MESSAGE(
         TRITONSERVER_LOG_INFO,
@@ -546,21 +563,19 @@ ModelInstanceState::RequestThread(
   if (element_count == 0) {
     LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
     RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceReportNoResponseStatistics(
-            TritonModelInstance()));
+        factory.get(), TRITONBACKEND_ModelInstanceReportNoResponseStatistics(
+                           TritonModelInstance()));
+    // All responses have been sent so we must signal that we are done
+    // sending responses for the request. We could have been smarter
+    // above and included the FINAL flag on the ResponseSend in the last
+    // iteration of the loop... but instead we demonstrate how to use
+    // the factory to send just response flags without a corresponding
+    // response.
+    LOG_IF_ERROR(
+        TRITONBACKEND_ResponseFactorySendFlags(
+            factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
+        "failed sending final response");
   }
-
-  // All responses have been sent so we must signal that we are done
-  // sending responses for the request. We could have been smarter
-  // above and included the FINAL flag on the ResponseSend in the last
-  // iteration of the loop... but instead we demonstrate how to use
-  // the factory to send just response flags without a corresponding
-  // response.
-  LOG_IF_ERROR(
-      TRITONBACKEND_ResponseFactorySendFlags(
-          factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
-      "failed sending final response");
 
   inflight_thread_count_--;
 }
