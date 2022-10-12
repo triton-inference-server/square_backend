@@ -427,22 +427,23 @@ ModelInstanceState::RequestThread(
             .c_str());
   }
 
-    // Add some logging for the case where IN was size 0 and so no
-    // responses were sent.
-    // Report statistics when no response is sent
-    if (element_count == 0) {
-      LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
-    // All responses have been sent so we must signal that we are done
-    // sending responses for the request. We could have been smarter
-    // above and included the FINAL flag on the ResponseSend in the last
-    // iteration of the loop... but instead we demonstrate how to use
-    // the factory to send just response flags without a corresponding
-    // response.
-    LOG_IF_ERROR(
-        TRITONBACKEND_ResponseFactorySendFlags(
-            factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
-        "failed sending final response");
+  // Add some logging for the case where IN was size 0 and so no
+  // responses were sent.
+  // Report statistics when no response is sent
+  if (element_count == 0) {
+    LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
   }
+  
+  // All responses have been sent so we must signal that we are done
+  // sending responses for the request. We could have been smarter
+  // above and included the FINAL flag on the ResponseSend in the last
+  // iteration of the loop... but instead we demonstrate how to use
+  // the factory to send just response flags without a corresponding
+  // response.
+  LOG_IF_ERROR(
+      TRITONBACKEND_ResponseFactorySendFlags(
+          factory.get(), TRITONSERVER_RESPONSE_COMPLETE_FINAL),
+      "failed sending final response");
 
   inflight_thread_count_--;
 }
