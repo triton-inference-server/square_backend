@@ -28,6 +28,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+
 #include "triton/backend/backend_common.h"
 
 //
@@ -433,7 +434,7 @@ ModelInstanceState::RequestThread(
   if (element_count == 0) {
     LOG_MESSAGE(TRITONSERVER_LOG_INFO, "IN size is zero, no responses send ");
   }
-  
+
   // All responses have been sent so we must signal that we are done
   // sending responses for the request. We could have been smarter
   // above and included the FINAL flag on the ResponseSend in the last
