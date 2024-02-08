@@ -98,8 +98,8 @@ namespace triton { namespace backend { namespace square {
 //
 class ModelParameters {
  public:
-  enum DelayType { Infer, Output };
-  enum InferResultType { Success, Fail, Empty };
+  enum DelayType { INFER, OUTPUT };
+  enum InferResultType { SUCCESS, FAIL, EMPTY };
 
   ModelParameters()
       : custom_infer_delay_ns_(0), custom_output_delay_ns_(0),
@@ -144,9 +144,9 @@ void
 ModelParameters::Sleep(DelayType delay_type) const
 {
   // Sleep on the requested delay type.
-  if (delay_type == DelayType::Infer) {
+  if (delay_type == DelayType::INFER) {
     Sleep(custom_infer_delay_ns_);
-  } else if (delay_type == DelayType::Output) {
+  } else if (delay_type == DelayType::OUTPUT) {
     Sleep(custom_output_delay_ns_);
   }
 }
@@ -161,14 +161,14 @@ ModelParameters::InferResult(size_t current_index, size_t element_count) const
   if (current_index + custom_fail_count_ + custom_empty_count_ <
       element_count) {
     // [0, N - E - F)
-    return ModelParameters::InferResultType::Success;
+    return ModelParameters::InferResultType::SUCCESS;
   }
   if (current_index + custom_empty_count_ < element_count) {
     // [N - E - F, N - E)
-    return ModelParameters::InferResultType::Fail;
+    return ModelParameters::InferResultType::FAIL;
   }
   // [N - E, N)
-  return ModelParameters::InferResultType::Empty;
+  return ModelParameters::InferResultType::EMPTY;
 }
 
 void
@@ -522,7 +522,7 @@ ModelInstanceState::RequestThread(
 
     // Simulate compute delay, if provided.
     model_state_->get_model_parameters().Sleep(
-        ModelParameters::DelayType::Infer);
+        ModelParameters::DelayType::INFER);
 
     // Result type of the simulated inference.
     ModelParameters::InferResultType result_type =
@@ -531,7 +531,7 @@ ModelInstanceState::RequestThread(
     // Populate 'compute_output_start_ns' and 'response' if not empty result.
     uint64_t compute_output_start_ns = 0;
     TRITONBACKEND_Response* response = nullptr;
-    if (result_type != ModelParameters::InferResultType::Empty) {
+    if (result_type != ModelParameters::InferResultType::EMPTY) {
       // Timestamp at start of outputting compute tensors.
       SET_TIMESTAMP(compute_output_start_ns);
 
@@ -569,7 +569,7 @@ ModelInstanceState::RequestThread(
 
       // Simulate output delay, if provided.
       model_state_->get_model_parameters().Sleep(
-          ModelParameters::DelayType::Output);
+          ModelParameters::DelayType::OUTPUT);
     }
 
     // Timestamp at end of the response.
@@ -578,13 +578,13 @@ ModelInstanceState::RequestThread(
 
     // Set error for simulated failure.
     TRITONSERVER_Error* error = nullptr;
-    if (result_type == ModelParameters::InferResultType::Fail) {
+    if (result_type == ModelParameters::InferResultType::FAIL) {
       error = TRITONSERVER_ErrorNew(
           TRITONSERVER_ERROR_UNKNOWN, "simulated failure");
     }
 
     // Send response if not empty.
-    if (result_type != ModelParameters::InferResultType::Empty) {
+    if (result_type != ModelParameters::InferResultType::EMPTY) {
       LOG_IF_ERROR(
           TRITONBACKEND_ResponseSend(response, 0 /* flags */, error),
           "failed sending response");
