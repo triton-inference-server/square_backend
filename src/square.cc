@@ -591,11 +591,18 @@ ModelInstanceState::RequestThread(
     }
 
     // Report response statistics.
+    TRITONBACKEND_ModelInstanceResponseStatistics* response_statistics =
+        new TRITONBACKEND_ModelInstanceResponseStatistics();
+    response_statistics->model_instance = TritonModelInstance();
+    response_statistics->response_factory = factory.get();
+    response_statistics->response_start = response_start_ns;
+    response_statistics->compute_output_start = compute_output_start_ns;
+    response_statistics->response_end = response_end_ns;
+    response_statistics->error = error;
     RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceReportResponseStatistics(
-            TritonModelInstance(), factory.get(), response_start_ns,
-            compute_output_start_ns, response_end_ns, 0 /* flags */, error));
+        factory.get(), TRITONBACKEND_ModelInstanceReportResponseStatistics(
+                           response_statistics));
+    delete response_statistics;
 
     // Delete error, if any.
     if (error != nullptr) {
