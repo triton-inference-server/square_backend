@@ -591,18 +591,39 @@ ModelInstanceState::RequestThread(
     }
 
     // Report response statistics.
-    TRITONBACKEND_ModelInstanceResponseStatistics* response_statistics =
-        new TRITONBACKEND_ModelInstanceResponseStatistics();
-    response_statistics->model_instance = TritonModelInstance();
-    response_statistics->response_factory = factory.get();
-    response_statistics->response_start = response_start_ns;
-    response_statistics->compute_output_start = compute_output_start_ns;
-    response_statistics->response_end = response_end_ns;
-    response_statistics->error = error;
+    TRITONBACKEND_ModelInstanceResponseStatistics* response_statistics;
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceResponseStatisticsNew(&response_statistics));
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceResponseStatisticsSetModelInstance(
+            response_statistics, TritonModelInstance()));
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseFactory(
+            response_statistics, factory.get()));
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseStart(
+            response_statistics, response_start_ns));
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceResponseStatisticsSetComputeOutputStart(
+            response_statistics, compute_output_start_ns));
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(),
+        TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseEnd(
+            response_statistics, response_end_ns));
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(), TRITONBACKEND_ModelInstanceResponseStatisticsSetError(
+                           response_statistics, error));
     RESPOND_FACTORY_AND_RETURN_IF_ERROR(
         factory.get(), TRITONBACKEND_ModelInstanceReportResponseStatistics(
                            response_statistics));
-    delete response_statistics;
+    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+        factory.get(), TRITONBACKEND_ModelInstanceResponseStatisticsDelete(
+                           response_statistics));
 
     // Delete error, if any.
     if (error != nullptr) {
