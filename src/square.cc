@@ -396,6 +396,11 @@ class ModelInstanceState {
   void RequestThread(
       TRITONBACKEND_ResponseFactory* factory_ptr, const size_t element_count,
       uint32_t dims_count);
+  void ReportResponseStatistics(
+      TRITONBACKEND_ModelInstance* model_instance,
+      TRITONBACKEND_ResponseFactory* factory_ptr,
+      const uint64_t response_start_ns, const uint64_t compute_output_start_ns,
+      const uint64_t response_end_ns, TRITONSERVER_Error* error) const;
 
   ModelState* model_state_;
   TRITONBACKEND_ModelInstance* triton_model_instance_;
@@ -592,39 +597,9 @@ ModelInstanceState::RequestThread(
     }
 
     // Report response statistics.
-    TRITONBACKEND_ModelInstanceResponseStatistics* response_statistics;
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceResponseStatisticsNew(&response_statistics));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceResponseStatisticsSetModelInstance(
-            response_statistics, TritonModelInstance()));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseFactory(
-            response_statistics, factory.get()));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseStart(
-            response_statistics, response_start_ns));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceResponseStatisticsSetComputeOutputStart(
-            response_statistics, compute_output_start_ns));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseEnd(
-            response_statistics, response_end_ns));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(), TRITONBACKEND_ModelInstanceResponseStatisticsSetError(
-                           response_statistics, error));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(), TRITONBACKEND_ModelInstanceReportResponseStatistics(
-                           response_statistics));
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(), TRITONBACKEND_ModelInstanceResponseStatisticsDelete(
-                           response_statistics));
+    ReportResponseStatistics(
+        TritonModelInstance(), factory.get(), response_start_ns,
+        compute_output_start_ns, response_end_ns, error);
 
     // Delete error, if any.
     if (error != nullptr) {
@@ -658,6 +633,47 @@ ModelInstanceState::RequestThread(
       "failed sending final response");
 
   inflight_thread_count_--;
+}
+
+void
+ModelInstanceState::ReportResponseStatistics(
+    TRITONBACKEND_ModelInstance* model_instance,
+    TRITONBACKEND_ResponseFactory* factory_ptr,
+    const uint64_t response_start_ns, const uint64_t compute_output_start_ns,
+    const uint64_t response_end_ns, TRITONSERVER_Error* error) const
+{
+  TRITONBACKEND_ModelInstanceResponseStatistics* response_statistics;
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsNew(&response_statistics));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetModelInstance(
+          response_statistics, model_instance));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseFactory(
+          response_statistics, factory_ptr));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseStart(
+          response_statistics, response_start_ns));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetComputeOutputStart(
+          response_statistics, compute_output_start_ns));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr, TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseEnd(
+                       response_statistics, response_end_ns));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr, TRITONBACKEND_ModelInstanceResponseStatisticsSetError(
+                       response_statistics, error));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceReportResponseStatistics(response_statistics));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsDelete(response_statistics));
 }
 
 /////////////
