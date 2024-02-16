@@ -157,7 +157,8 @@ ModelParameters::InferResult(size_t current_index, size_t element_count) const
   // i.e. there are N element_count, F fail count and E empty count. Return
   // empty on [N - E, N) index and fail on [N - E - F, N - E) elements. With
   // proper N, F and E values, infer result will initially return success, and
-  // then fail, and then empty.
+  // then fail, and then empty. See the constructor for how the fail count and
+  // empty count are imported from the parameters on model config.
   if (current_index + custom_fail_count_ + custom_empty_count_ <
       element_count) {
     // [0, N - E - F)
