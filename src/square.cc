@@ -1,4 +1,4 @@
-// Copyright 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright 2020-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -24,6 +24,7 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -90,6 +91,134 @@ namespace triton { namespace backend { namespace square {
   } while (false)
 
 //
+// ModelParameters
+//
+// Helper class for parsing and storing model config parameters, and help
+// performing required operations on the stored parameters.
+//
+class ModelParameters {
+ public:
+  enum DelayType { INFER, OUTPUT };
+  enum InferResultType { SUCCESS, FAIL, EMPTY };
+
+  ModelParameters()
+      : custom_infer_delay_ns_(0), custom_output_delay_ns_(0),
+        custom_fail_count_(0), custom_empty_count_(0)
+  {
+  }
+  ModelParameters(common::TritonJson::Value& model_config_);
+
+  void Sleep(DelayType delay_type) const;
+  InferResultType InferResult(size_t current_index, size_t element_count) const;
+
+ private:
+  void ReadParameter(
+      common::TritonJson::Value& parameters_json, const std::string& key,
+      size_t* value) const;
+  void Sleep(size_t delay_ns) const;
+  bool IsNumber(const std::string& str) const;
+
+  size_t custom_infer_delay_ns_;
+  size_t custom_output_delay_ns_;
+  size_t custom_fail_count_;
+  size_t custom_empty_count_;
+};
+
+ModelParameters::ModelParameters(common::TritonJson::Value& model_config_)
+    : ModelParameters()
+{
+  // Parse and store model config parameters. Any non-well-formed parameter
+  // will be left at its default value.
+  common::TritonJson::Value parameters_json;
+  if (model_config_.Find("parameters", &parameters_json)) {
+    ReadParameter(
+        parameters_json, "CUSTOM_INFER_DELAY_NS", &custom_infer_delay_ns_);
+    ReadParameter(
+        parameters_json, "CUSTOM_OUTPUT_DELAY_NS", &custom_output_delay_ns_);
+    ReadParameter(parameters_json, "CUSTOM_FAIL_COUNT", &custom_fail_count_);
+    ReadParameter(parameters_json, "CUSTOM_EMPTY_COUNT", &custom_empty_count_);
+  }
+}
+
+void
+ModelParameters::Sleep(DelayType delay_type) const
+{
+  // Sleep on the requested delay type.
+  if (delay_type == DelayType::INFER) {
+    Sleep(custom_infer_delay_ns_);
+  } else if (delay_type == DelayType::OUTPUT) {
+    Sleep(custom_output_delay_ns_);
+  }
+}
+
+ModelParameters::InferResultType
+ModelParameters::InferResult(size_t current_index, size_t element_count) const
+{
+  // i.e. there are N element_count, F fail count and E empty count. Return
+  // empty on [N - E, N) index and fail on [N - E - F, N - E) elements. With
+  // proper N, F and E values, infer result will initially return success, and
+  // then fail, and then empty. See the constructor for how the fail count and
+  // empty count are imported from the parameters on model config.
+  if (current_index + custom_fail_count_ + custom_empty_count_ <
+      element_count) {
+    // [0, N - E - F)
+    return ModelParameters::InferResultType::SUCCESS;
+  }
+  if (current_index + custom_empty_count_ < element_count) {
+    // [N - E - F, N - E)
+    return ModelParameters::InferResultType::FAIL;
+  }
+  // [N - E, N)
+  return ModelParameters::InferResultType::EMPTY;
+}
+
+void
+ModelParameters::ReadParameter(
+    common::TritonJson::Value& parameters_json, const std::string& key,
+    size_t* value) const
+{
+  common::TritonJson::Value value_json;
+  if (parameters_json.Find(key.c_str(), &value_json)) {
+    std::string value_str;
+    if (value_json.MemberAsString("string_value", &value_str) != nullptr) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO,
+          (std::string("string_value cannot be parsed from ") + key +
+           " parameter")
+              .c_str());
+      return;
+    }
+    if (!IsNumber(value_str)) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO, (value_str + " string_value from " + key +
+                                  " parameter is not a number")
+                                     .c_str());
+      return;
+    }
+    *value = std::stoi(value_str);
+  }
+}
+
+void
+ModelParameters::Sleep(size_t delay_ns) const
+{
+  if (delay_ns > 0) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("add delay ") + std::to_string(delay_ns) + " ns").c_str());
+    std::this_thread::sleep_for(std::chrono::nanoseconds(delay_ns));
+  }
+}
+
+bool
+ModelParameters::IsNumber(const std::string& str) const
+{
+  return std::find_if(str.begin(), str.end(), [](unsigned char c) {
+           return !std::isdigit(c);
+         }) == str.end();
+}
+
+//
 // ModelState
 //
 // State associated with a model that is using this backend. An object
@@ -107,6 +236,9 @@ class ModelState {
   // Validate that model configuration is supported by this backend.
   TRITONSERVER_Error* ValidateModelConfig();
 
+  // Get model parameters.
+  const ModelParameters& get_model_parameters() { return model_parameters_; }
+
  private:
   ModelState(
       TRITONBACKEND_Model* triton_model,
@@ -114,6 +246,7 @@ class ModelState {
 
   TRITONBACKEND_Model* triton_model_;
   common::TritonJson::Value model_config_;
+  ModelParameters model_parameters_;
 };
 
 TRITONSERVER_Error*
@@ -146,7 +279,8 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 
 ModelState::ModelState(
     TRITONBACKEND_Model* triton_model, common::TritonJson::Value&& model_config)
-    : triton_model_(triton_model), model_config_(std::move(model_config))
+    : triton_model_(triton_model), model_config_(std::move(model_config)),
+      model_parameters_(model_config_)
 {
 }
 
@@ -262,6 +396,11 @@ class ModelInstanceState {
   void RequestThread(
       TRITONBACKEND_ResponseFactory* factory_ptr, const size_t element_count,
       uint32_t dims_count);
+  void ReportResponseStatistics(
+      TRITONBACKEND_ModelInstance* model_instance,
+      TRITONBACKEND_ResponseFactory* factory_ptr,
+      const uint64_t response_start_ns, const uint64_t compute_output_start_ns,
+      const uint64_t response_end_ns, TRITONSERVER_Error* error) const;
 
   ModelState* model_state_;
   TRITONBACKEND_ModelInstance* triton_model_instance_;
@@ -380,47 +519,94 @@ ModelInstanceState::RequestThread(
       TRITONBACKEND_ResponseFactory, backend::ResponseFactoryDeleter>
       factory(factory_ptr);
 
-  // Copy IN->OUT, and send a response.
+  // Copy IN -> OUT, and send a response.
   const std::vector<int64_t> output_shape(dims_count, 1);
-  for (size_t e = 0; e < element_count; ++e) {
-    // Create the response with a single OUT output.
-    TRITONBACKEND_Response* response;
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(),
-        TRITONBACKEND_ResponseNewFromFactory(&response, factory.get()));
+  for (size_t e = 0; e < element_count; e++) {
+    // Timestamp at start of the response.
+    uint64_t response_start_ns;
+    SET_TIMESTAMP(response_start_ns);
 
-    TRITONBACKEND_Output* output;
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(), TRITONBACKEND_ResponseOutput(
-                           response, &output, "OUT", TRITONSERVER_TYPE_INT32,
-                           output_shape.data(), dims_count));
+    // Simulate compute delay, if provided.
+    model_state_->get_model_parameters().Sleep(
+        ModelParameters::DelayType::INFER);
 
-    // Get the output buffer. We request a buffer in CPU memory but we
-    // have to handle any returned type. If we get back a buffer in
-    // GPU memory we just fail the request.
-    void* output_buffer;
-    TRITONSERVER_MemoryType output_memory_type = TRITONSERVER_MEMORY_CPU;
-    int64_t output_memory_type_id = 0;
-    RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-        factory.get(), TRITONBACKEND_OutputBuffer(
-                           output, &output_buffer, sizeof(int32_t),
-                           &output_memory_type, &output_memory_type_id));
-    if (output_memory_type == TRITONSERVER_MEMORY_GPU) {
+    // Result type of the simulated inference.
+    ModelParameters::InferResultType result_type =
+        model_state_->get_model_parameters().InferResult(e, element_count);
+
+    // Populate 'compute_output_start_ns' and 'response' if not empty result.
+    uint64_t compute_output_start_ns = 0;
+    TRITONBACKEND_Response* response = nullptr;
+    if (result_type != ModelParameters::InferResultType::EMPTY) {
+      // Timestamp at start of outputting compute tensors.
+      SET_TIMESTAMP(compute_output_start_ns);
+
+      // Create the response with a single OUT output.
       RESPOND_FACTORY_AND_RETURN_IF_ERROR(
-          factory.get(), TRITONSERVER_ErrorNew(
-                             TRITONSERVER_ERROR_INTERNAL,
-                             "failed to create output buffer in CPU memory"));
+          factory.get(),
+          TRITONBACKEND_ResponseNewFromFactory(&response, factory.get()));
+
+      // Get response output container.
+      TRITONBACKEND_Output* output;
+      RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+          factory.get(), TRITONBACKEND_ResponseOutput(
+                             response, &output, "OUT", TRITONSERVER_TYPE_INT32,
+                             output_shape.data(), dims_count));
+
+      // Get the output buffer. We request a buffer in CPU memory but we
+      // have to handle any returned type. If we get back a buffer in
+      // GPU memory we just fail the request.
+      void* output_buffer;
+      TRITONSERVER_MemoryType output_memory_type = TRITONSERVER_MEMORY_CPU;
+      int64_t output_memory_type_id = 0;
+      RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+          factory.get(), TRITONBACKEND_OutputBuffer(
+                             output, &output_buffer, sizeof(int32_t),
+                             &output_memory_type, &output_memory_type_id));
+      if (output_memory_type == TRITONSERVER_MEMORY_GPU) {
+        RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+            factory.get(), TRITONSERVER_ErrorNew(
+                               TRITONSERVER_ERROR_INTERNAL,
+                               "failed to create output buffer in CPU memory"));
+      }
+
+      // Copy IN -> OUT
+      *(reinterpret_cast<int32_t*>(output_buffer)) = element_count;
+
+      // Simulate output delay, if provided.
+      model_state_->get_model_parameters().Sleep(
+          ModelParameters::DelayType::OUTPUT);
     }
 
-    // Copy IN -> OUT
-    *(reinterpret_cast<int32_t*>(output_buffer)) = element_count;
+    // Timestamp at end of the response.
+    uint64_t response_end_ns;
+    SET_TIMESTAMP(response_end_ns);
 
-    // Send the response.
-    LOG_IF_ERROR(
-        TRITONBACKEND_ResponseSend(
-            response, 0 /* flags */, nullptr /* success */),
-        "failed sending response");
+    // Set error for simulated failure.
+    TRITONSERVER_Error* error = nullptr;
+    if (result_type == ModelParameters::InferResultType::FAIL) {
+      error = TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_UNKNOWN, "simulated failure");
+    }
 
+    // Send response if not empty.
+    if (result_type != ModelParameters::InferResultType::EMPTY) {
+      LOG_IF_ERROR(
+          TRITONBACKEND_ResponseSend(response, 0 /* flags */, error),
+          "failed sending response");
+    }
+
+    // Report response statistics.
+    ReportResponseStatistics(
+        TritonModelInstance(), factory.get(), response_start_ns,
+        compute_output_start_ns, response_end_ns, error);
+
+    // Delete error, if any.
+    if (error != nullptr) {
+      TRITONSERVER_ErrorDelete(error);
+    }
+
+    // Additional logs for debugging.
     LOG_MESSAGE(
         TRITONSERVER_LOG_INFO,
         (std::string("sent response ") + std::to_string(e + 1) + " of " +
@@ -447,6 +633,47 @@ ModelInstanceState::RequestThread(
       "failed sending final response");
 
   inflight_thread_count_--;
+}
+
+void
+ModelInstanceState::ReportResponseStatistics(
+    TRITONBACKEND_ModelInstance* model_instance,
+    TRITONBACKEND_ResponseFactory* factory_ptr,
+    const uint64_t response_start_ns, const uint64_t compute_output_start_ns,
+    const uint64_t response_end_ns, TRITONSERVER_Error* error) const
+{
+  TRITONBACKEND_ModelInstanceResponseStatistics* response_statistics;
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsNew(&response_statistics));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetModelInstance(
+          response_statistics, model_instance));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseFactory(
+          response_statistics, factory_ptr));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseStart(
+          response_statistics, response_start_ns));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsSetComputeOutputStart(
+          response_statistics, compute_output_start_ns));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr, TRITONBACKEND_ModelInstanceResponseStatisticsSetResponseEnd(
+                       response_statistics, response_end_ns));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr, TRITONBACKEND_ModelInstanceResponseStatisticsSetError(
+                       response_statistics, error));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceReportResponseStatistics(response_statistics));
+  RESPOND_FACTORY_AND_RETURN_IF_ERROR(
+      factory_ptr,
+      TRITONBACKEND_ModelInstanceResponseStatisticsDelete(response_statistics));
 }
 
 /////////////
