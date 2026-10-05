@@ -30,112 +30,51 @@
 
 ## Reporting a Vulnerability
 
-NVIDIA is dedicated to the security and trust of our software products and
-services, including all source code repositories managed through our
-organization. If you believe you have found a security vulnerability in this
-repository, report it through one of the channels below.
+NVIDIA is dedicated to the security and trust of our software products and services, including all source code repositories managed through our organization.
 
-**Do not report security vulnerabilities through public GitHub issues,
-discussions, or pull requests.**
+To report a potential security vulnerability, please use one of the following channels:
 
-1. **NVIDIA Vulnerability Disclosure Program (preferred):**
-   <https://www.nvidia.com/en-us/security/>
-2. **Email:** <psirt@nvidia.com>. Encrypt sensitive reports with the NVIDIA
-   PGP key: <https://www.nvidia.com/en-us/security/pgp-key>
-3. **GitHub Private Vulnerability Reporting:** use the "Report a vulnerability"
-   button on the Security tab of this repository, where available.
+1. **NVIDIA Vulnerability Disclosure Program** (preferred): https://www.nvidia.com/en-us/security/
+2. **Web form:** [Security Vulnerability Submission Form](https://www.nvidia.com/object/submit-security-vulnerability.html)
+3. **Email:** [NVIDIA PSIRT](mailto:psirt@nvidia.com). Please encrypt sensitive reports with NVIDIA's [PGP key](https://www.nvidia.com/en-us/security/pgp-key).
+4. **GitHub Private Vulnerability Reporting (where enabled):** use the "Report a vulnerability" button on the Security tab of this repository.
 
-Please include as much of the following as you can:
+**Do not open a public issue or pull request to report a vulnerability.**
 
-- Product or repository name and the version, tag, or commit affected
-- Type of vulnerability (for example denial of service, memory safety, or
-  information disclosure)
-- Step-by-step instructions to reproduce the issue
-- Proof-of-concept or exploit code, if available
-- Impact, including how an attacker could exploit the issue
+Please include:
 
-NVIDIA PSIRT acknowledges reports, assesses severity, coordinates a fix and
-disclosure timeline with the reporter, and publishes security bulletins at
-<https://www.nvidia.com/en-us/security/>. OEM partners should contact their
-NVIDIA Customer Program Manager.
+* Product or component name and version or branch
+* Type of vulnerability
+* Steps to reproduce
+* Proof of concept, if available
+* Potential impact and how it could be exploited
+
+See https://www.nvidia.com/en-us/security/ for past NVIDIA Security Bulletins and Notices.
 
 ## Security Architecture and Context
 
-**Project:** `square_backend` is an example Triton Inference Server backend
-written in C++ that demonstrates the `TRITONBACKEND` API for a decoupled model
-(one request can produce zero or more responses). It is built as a shared
-library (`libtriton_square.so`) that Triton loads in-process.
+**Project:** Simple Triton backend used for testing.
 
-**Software classification:** Library (a plugin loaded by Triton Inference
-Server). It is intended for testing and as a reference implementation, not as a
-production inference backend.
+**Software type:** Software component (library, backend, client or tool) used as part of a Triton Inference Server deployment.
 
-**Primary security responsibility:** Correctly parse the untrusted request
-tensor and model configuration handed to it by the Triton core, and manage the
-lifetime of the per-request response threads it creates.
+**Security boundaries:** The main security boundary is between this component and the data, models and configuration it is given, and between it and the server or application that hosts it.
 
-**Key interfaces and boundaries:**
+**Repository Exposure Classification:** Public.
 
-- The `TRITONBACKEND_*` C API boundary between Triton core and this library.
-  The backend runs in the Triton server process and has the same privileges.
-- The model configuration (`config.pbtxt`) `parameters` map, which controls
-  simulated delays and simulated failures.
-- The `IN` request tensor (one `INT32` element), supplied by remote clients
-  through the Triton endpoints.
-
-The backend performs no networking, authentication, file I/O, or cryptography
-of its own. Those concerns belong to the hosting Triton Inference Server.
-
-**Repository Exposure Classification:** Public (the repository is publicly
-visible on GitHub).
-
-**Service Exposure Classification:** Deployment-dependent, medium confidence.
-The library is a test and demonstration component that only handles synthetic
-integer data and holds no sensitive data. It inherits the exposure of whichever
-Triton deployment loads it, so an internet-facing deployment is as exposed as
-that deployment, not isolated.
+**Service Exposure Classification:** Deployment-dependent. Exposure depends on how the software is deployed and configured by the operator.
 
 ## Threat Model
 
-1. **Resource exhaustion through a client-controlled response count:** the
-   value of the single `IN` element sets how many responses are generated by a
-   detached thread for that request. A large value, or a negative value
-   converted to an unsigned count, can keep a thread busy for a very long time.
-   Many such requests can consume threads and CPU in the Triton process.
-2. **Malformed input tensor handling:** the backend reads the first element of
-   the copied input buffer. A zero-sized `IN` tensor or an unexpected shape
-   that passes the limited shape check can lead to reading outside the
-   buffer, affecting availability or integrity of the server process.
-3. **Unhandled exceptions from model configuration parameters:** the numeric
-   `CUSTOM_*` parameters are validated as digit strings and converted with
-   `std::stoi`. An empty or out-of-range value can raise an uncaught C++
-   exception in model initialization, which can terminate the server process.
-   Exploitation requires the ability to supply a model configuration.
-4. **Slow-down through configurable delays:** the `CUSTOM_*_DELAY_NS`
-   parameters make each response sleep. An operator or repository writer who
-   controls the configuration can stall request processing and model unload.
-5. **Unload hang from detached response threads:** the model instance
-   destructor polls until all detached response threads finish. A long-running
-   request can delay or block unloading and server shutdown.
-6. **Information exposure in logs:** the full model configuration and
-   per-response messages are written to the Triton log at INFO level. Anyone
-   with log access can read configuration contents.
+1. **Untrusted input:** Requests, models, configuration or data supplied to this component may be malformed or malicious, and could cause crashes, memory errors or unintended behavior if not validated.
+2. **Supply chain:** Source and build dependencies fetched at build or install time may be compromised, outdated or unpinned.
+3. **Network exposure:** When deployed behind a network-facing server, endpoints may be reachable by untrusted clients. This component does not by itself provide authentication, authorization or encryption.
+4. **Resource exhaustion:** Oversized or numerous requests may consume memory, compute or other resources and degrade availability.
+5. **Information disclosure:** Logs, metrics and error messages may reveal sensitive data such as paths, identifiers or request content.
 
 ## Critical Security Assumptions
 
-- **Trusted model repository:** model configurations and the backend binary
-  come from a trusted source. The backend does not authenticate or sandbox
-  them.
-- **Authentication and TLS are external:** callers are authenticated and
-  transport is protected by the Triton endpoints or a fronting proxy. This
-  library provides neither.
-- **Rate limiting is external:** request rates, payload limits, and per-client
-  quotas are enforced by Triton or by the deployment, not by this backend.
-- **Input shape and size are partly trusted:** the backend assumes Triton core
-  has validated request tensors against the model configuration and does not
-  independently bound the `IN` value.
-- **Test use only:** this backend is not hardened for untrusted multi-tenant
-  or internet-facing production use.
-- **Supply chain:** the build depends on the Triton `backend`, `core`, and
-  `common` repositories fetched at configure time; consumers should pin and
-  verify the versions they build against.
+* The component is deployed in a trusted environment or behind a gateway that provides authentication, authorization, TLS and rate limiting.
+* Models, configuration and other inputs come from trusted sources.
+* Dependencies and the build environment are kept up to date and obtained from trusted sources.
+* Operators protect secrets, certificates and credentials, and restrict access to logs and metrics.
+* Host operating system, driver and hardware security are the operator's responsibility.
