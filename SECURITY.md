@@ -89,10 +89,11 @@ of its own. Those concerns belong to the hosting Triton Inference Server.
 **Repository Exposure Classification:** Public (the repository is publicly
 visible on GitHub).
 
-**Service Exposure Classification:** Internal-Isolated, medium confidence. The
-library is a test and demonstration component that only handles synthetic
+**Service Exposure Classification:** Deployment-dependent, medium confidence.
+The library is a test and demonstration component that only handles synthetic
 integer data and holds no sensitive data. It inherits the exposure of whichever
-Triton deployment loads it.
+Triton deployment loads it, so an internet-facing deployment is as exposed as
+that deployment, not isolated.
 
 ## Threat Model
 
